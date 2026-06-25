@@ -66,9 +66,6 @@ dependencies:
   # Lyrics
   lrc: ^2.0.0
 
-  # Equalizer
-  flutter_equalizer: ^0.0.2
-
   # Utils
   uuid: ^4.3.3
   intl: ^0.18.1
