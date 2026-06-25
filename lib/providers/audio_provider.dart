@@ -1,5 +1,5 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/audio_player_service.dart';
 import '../models/song_model_clean.dart';
 
@@ -12,14 +12,14 @@ final audioServiceProvider = Provider<AudioPlayerService>((ref) {
 final currentSongProvider = StreamProvider<SongModel?>((ref) {
   final service = ref.watch(audioServiceProvider);
   return service.currentIndexStream.map((index) {
-    if (index == null || index >= service.queue.length) return null;
-    return service.queue[index];
+    if (index == null || index >= service.songQueue.length) return null;
+    return service.songQueue[index];
   });
 });
 
 final playbackStateProvider = StreamProvider<PlaybackState>((ref) {
   final service = ref.watch(audioServiceProvider);
-  return service.playbackStateStream;
+  return service.playbackState;
 });
 
 final positionDataProvider = StreamProvider<PositionData>((ref) {
@@ -29,5 +29,5 @@ final positionDataProvider = StreamProvider<PositionData>((ref) {
 
 final queueProvider = Provider<List<SongModel>>((ref) {
   final service = ref.watch(audioServiceProvider);
-  return service.queue;
+  return service.songQueue;
 });
