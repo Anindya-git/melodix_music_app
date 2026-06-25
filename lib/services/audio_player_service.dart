@@ -8,7 +8,6 @@ class PositionData {
   final Duration position;
   final Duration bufferedPosition;
   final Duration? duration;
-
   PositionData(this.position, this.bufferedPosition, this.duration);
 }
 
@@ -17,12 +16,11 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
   final _ytService = YouTubeMusicService();
   final _playlist = ConcatenatingAudioSource(children: []);
 
-  List<SongModel> _queue = [];
+  List<SongModel> _songQueue = [];
   int _currentIndex = 0;
   bool _shuffle = false;
   LoopMode _loopMode = LoopMode.off;
 
-  // Streams
   Stream<PositionData> get positionDataStream => Rx.combineLatest3(
         _player.positionStream,
         _player.bufferedPositionStream,
@@ -30,10 +28,9 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
         (pos, buf, dur) => PositionData(pos, buf, dur),
       );
 
-  Stream<PlaybackState> get playbackStateStream => playbackState;
   Stream<int?> get currentIndexStream => _player.currentIndexStream;
   AudioPlayer get player => _player;
-  List<SongModel> get queue => _queue;
+  List<SongModel> get songQueue => _songQueue;
   int get currentIndex => _currentIndex;
   bool get isShuffle => _shuffle;
   LoopMode get loopMode => _loopMode;
@@ -45,12 +42,11 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
   void _init() {
     _player.playbackEventStream.listen(_broadcastState);
     _player.currentIndexStream.listen((i) {
-      if (i != null && i < _queue.length) {
+      if (i != null && i < _songQueue.length) {
         _currentIndex = i;
-        mediaItem.add(_mediaItemFromSong(_queue[i]));
+        mediaItem.add(_mediaItemFromSong(_songQueue[i]));
       }
     });
-
     _player.setAudioSource(_playlist, preload: false);
   }
 
@@ -63,8 +59,6 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
         duration: Duration(milliseconds: song.durationMs),
       );
 
-  // ─── Playback Controls ────────────────────────────────────────────────────
-
   @override
   Future<void> play() => _player.play();
 
@@ -72,20 +66,14 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
   Future<void> pause() => _player.pause();
 
   @override
-  Future<void> stop() async {
-    await _player.stop();
-    await playbackState.firstWhere(
-        (state) => state.processingState == AudioProcessingState.idle);
-  }
+  Future<void> stop() => _player.stop();
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
 
   @override
   Future<void> skipToNext() async {
-    if (_player.hasNext) {
-      await _player.seekToNext();
-    }
+    if (_player.hasNext) await _player.seekToNext();
   }
 
   @override
@@ -98,60 +86,65 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
   }
 
   Future<void> skipToIndex(int index) async {
-    if (index >= 0 && index < _queue.length) {
+    if (index >= 0 && index < _songQueue.length) {
       await _player.seek(Duration.zero, index: index);
       await _player.play();
     }
   }
 
-  // ─── Queue Management ─────────────────────────────────────────────────────
-
-  Future<void> playSong(SongModel song, {List<SongModel>? songQueue, int startIndex = 0}) async {
+  Future<void> playSong(SongModel song,
+      {List<SongModel>? songQueue, int startIndex = 0}) async {
     if (songQueue != null) {
-      _queue = songQueue;
+      _songQueue = songQueue;
       _currentIndex = startIndex;
     } else {
-      _queue = [song];
+      _songQueue = [song];
       _currentIndex = 0;
     }
-
     await _rebuildPlaylist();
     await _player.seek(Duration.zero, index: _currentIndex);
     await _player.play();
   }
 
   Future<void> addToQueue(SongModel song) async {
-    _queue.add(song);
+    _songQueue.add(song);
     final url = await _getStreamUrl(song);
-    await _playlist.add(AudioSource.uri(Uri.parse(url), tag: _mediaItemFromSong(song)));
+    if (url.isNotEmpty) {
+      await _playlist.add(
+        AudioSource.uri(Uri.parse(url), tag: _mediaItemFromSong(song)),
+      );
+    }
   }
 
   Future<void> removeFromQueue(int index) async {
-    if (index >= 0 && index < _queue.length) {
-      _queue.removeAt(index);
+    if (index >= 0 && index < _songQueue.length) {
+      _songQueue.removeAt(index);
       await _playlist.removeAt(index);
     }
   }
 
   Future<void> reorderQueue(int oldIndex, int newIndex) async {
     if (oldIndex < newIndex) newIndex--;
-    final song = _queue.removeAt(oldIndex);
-    _queue.insert(newIndex, song);
+    final song = _songQueue.removeAt(oldIndex);
+    _songQueue.insert(newIndex, song);
     await _playlist.move(oldIndex, newIndex);
   }
 
   Future<void> _rebuildPlaylist() async {
     await _playlist.clear();
     final sources = <AudioSource>[];
-    for (final song in _queue) {
+    for (final song in _songQueue) {
       final url = await _getStreamUrl(song);
-      sources.add(AudioSource.uri(
-        Uri.parse(url),
-        tag: _mediaItemFromSong(song),
-      ));
+      if (url.isNotEmpty) {
+        sources.add(AudioSource.uri(
+          Uri.parse(url),
+          tag: _mediaItemFromSong(song),
+        ));
+      }
     }
     await _playlist.addAll(sources);
-    queue.add(_queue.map(_mediaItemFromSong).toList());
+    // Update the parent class queue with MediaItems
+    queue.add(_songQueue.map(_mediaItemFromSong).toList());
   }
 
   Future<String> _getStreamUrl(SongModel song) async {
@@ -160,8 +153,6 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
     final url = await _ytService.getStreamUrl(song.id);
     return url ?? '';
   }
-
-  // ─── Shuffle & Repeat ─────────────────────────────────────────────────────
 
   Future<void> toggleShuffle() async {
     _shuffle = !_shuffle;
@@ -183,16 +174,9 @@ class AudioPlayerService extends BaseAudioHandler with QueueHandler, SeekHandler
     await _player.setLoopMode(_loopMode);
   }
 
-  // ─── Speed & Pitch ────────────────────────────────────────────────────────
-
   Future<void> setSpeed(double speed) => _player.setSpeed(speed);
   Future<void> setPitch(double pitch) => _player.setPitch(pitch);
-
-  // ─── Volume ───────────────────────────────────────────────────────────────
-
   Future<void> setVolume(double volume) => _player.setVolume(volume);
-
-  // ─── State Broadcast ──────────────────────────────────────────────────────
 
   void _broadcastState(PlaybackEvent event) {
     final playing = _player.playing;
